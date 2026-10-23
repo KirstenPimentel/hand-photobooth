@@ -1,0 +1,1812 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ebe5d5">
+  <title>Hand Photobooth</title>
+  <!-- handwritten font (needs internet, falls back to another handwriting font if offline) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --paper: #ebe5d5;   /* cream / dirty white background */
+      --ink: #111111;
+    }
+    * {
+      -webkit-tap-highlight-color: transparent;
+    }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--paper);
+      overflow: hidden;
+      touch-action: manipulation;
+      overscroll-behavior: none;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 14px;
+      font-family: sans-serif;
+    }
+    /* soft paper grain (static, so it does not slow the camera down) */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      opacity: 0.12;
+      pointer-events: none;
+      z-index: 0;
+    }
+    /* the camera video stays in the page but is invisible (iPhones need this) */
+    video {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 2px;
+      height: 2px;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* ---- the camera panel: black with a white glowing rectangle ---- */
+    #stage {
+      position: relative;
+      z-index: 1;
+      background: #050505;
+      padding: 22px;   /* keep the same number as STAGE_PAD in the script */
+      border-radius: 26px;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.25);
+    }
+    #stage::after {
+      content: "";
+      position: absolute;
+      inset: 8px;
+      border: 2px solid #fff;
+      box-shadow: 0 0 6px #fff, 0 0 16px rgba(255, 255, 255, 0.75), inset 0 0 10px rgba(255, 255, 255, 0.55);
+      pointer-events: none;
+    }
+    #canvas {
+      display: block;
+      transform: scaleX(-1); /* mirror it */
+    }
+    #filterName {
+      position: absolute;
+      top: 30px;
+      right: 30px;
+      max-width: 60%;
+      text-align: right;
+      color: white;
+      font: clamp(13px, 3.4vw, 20px) monospace;
+      text-shadow: 0 0 6px black;
+    }
+    #fps {
+      position: absolute;
+      top: 30px;
+      left: 30px;
+      color: lime;
+      font: 16px monospace;
+    }
+    #shotLabel {
+      position: absolute;
+      top: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: white;
+      font: bold clamp(16px, 4.5vw, 24px) sans-serif;
+      text-shadow: 0 0 8px black;
+      white-space: nowrap;
+    }
+    #toast {
+      position: absolute;
+      top: 22%;
+      left: 50%;
+      transform: translateX(-50%);
+      color: white;
+      font: bold clamp(22px, 7vw, 48px) sans-serif;
+      text-shadow: 0 0 14px black;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    #countdown {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: white;
+      font: bold clamp(90px, 28vmin, 160px) sans-serif;
+      text-shadow: 0 0 20px black;
+      pointer-events: none;
+    }
+    /* handwritten instructions on the lower part of the camera frame */
+    #howto {
+      position: absolute;
+      left: 22px;
+      right: 22px;
+      bottom: 22px;
+      padding: 30px 12px 10px;
+      text-align: center;
+      white-space: pre-line;
+      color: #fff;
+      font-family: "Caveat", "Segoe Print", "Bradley Hand", "Chalkboard SE", "Comic Sans MS", cursive;
+      font-weight: 700;
+      font-size: clamp(16px, 3.8vw, 26px);
+      line-height: 1.15;
+      text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
+      background: linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.55));
+      pointer-events: none;
+    }
+
+    #status {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      max-width: 80vw;
+      text-align: center;
+      color: white;
+      background: rgba(0, 0, 0, 0.75);
+      padding: 12px 18px;
+      border-radius: 12px;
+      font: 16px sans-serif;
+      z-index: 6;
+    }
+    #status:empty {
+      display: none;
+    }
+
+    /* ---- buttons under the camera ---- */
+    #controls {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    #photoBtn {
+      padding: 12px 28px;
+      font-size: clamp(16px, 4.5vw, 20px);
+      border: none;
+      border-radius: 999px;
+      background: var(--ink);
+      color: #f3eee0;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #photoBtn:hover {
+      background: #333;
+    }
+    #groupBtn {
+      padding: 10px 16px;
+      font-size: 14px;
+      border: 1.5px solid var(--ink);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--ink);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #groupBtn.on {
+      background: var(--ink);
+      color: #f3eee0;
+    }
+
+    #flash {
+      position: fixed;
+      inset: 0;
+      background: white;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.4s;
+      z-index: 20;
+    }
+
+    /* when the results screen is open, the camera is hidden */
+    body.results-open #stage,
+    body.results-open #controls {
+      display: none;
+    }
+
+    /* ---- results screen ---- */
+    #results {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      color: var(--ink);
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      overflow: auto;
+      padding: 20px 16px;
+      padding-top: calc(20px + env(safe-area-inset-top));
+      padding-bottom: calc(20px + env(safe-area-inset-bottom));
+      box-sizing: border-box;
+    }
+    #results.show {
+      display: flex;
+    }
+    #results h2 {
+      margin: 0;
+      font: 300 clamp(16px, 4vw, 22px) "Helvetica Neue", Helvetica, Arial, sans-serif;
+      text-transform: lowercase;
+      letter-spacing: 0.25em;
+    }
+    #layoutBtns, #themeBtns, #actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .layoutBtn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 16px;
+      background: transparent;
+      color: var(--ink);
+      border: 1.5px solid var(--ink);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      text-transform: lowercase;
+    }
+    .layoutBtn.active {
+      background: var(--ink);
+      color: #f3eee0;
+    }
+    .layoutBtn svg {
+      width: 48px;
+      height: 48px;
+      fill: currentColor;
+    }
+    .themeBtn {
+      padding: 6px 14px;
+      background: transparent;
+      color: var(--ink);
+      border: 1.5px solid var(--ink);
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 13px;
+      text-transform: lowercase;
+    }
+    .themeBtn.active {
+      background: var(--ink);
+      color: #f3eee0;
+    }
+    #sheet {
+      width: auto;
+      height: auto;
+      max-width: 88vw;
+      max-height: 46vh;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    }
+    #captionInput {
+      padding: 8px 12px;
+      font-size: 16px; /* 16px stops iPhones from zooming in when typing */
+      border-radius: 4px;
+      border: 1.5px solid var(--ink);
+      background: #f7f3e8;
+      color: var(--ink);
+      width: 260px;
+      max-width: 80vw;
+      text-align: center;
+    }
+    .actionBtn {
+      padding: 12px 26px;
+      font-size: 16px;
+      border: 1.5px solid var(--ink);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--ink);
+      cursor: pointer;
+      text-transform: lowercase;
+    }
+    #downloadBtn {
+      background: var(--ink);
+      color: #f3eee0;
+    }
+
+    /* small screens (phones) */
+    @media (max-width: 600px) {
+      .layoutBtn {
+        padding: 8px 10px;
+        font-size: 12px;
+      }
+      .layoutBtn svg {
+        width: 36px;
+        height: 36px;
+      }
+      .actionBtn {
+        padding: 10px 18px;
+        font-size: 15px;
+      }
+      #sheet {
+        max-height: 40vh;
+      }
+    }
+
+    /* ---- printing: only the finished card is printed ---- */
+    #printArea {
+      display: none;
+    }
+    @media print {
+      @page { margin: 0.4in; }
+      html, body { height: auto; overflow: visible; background: white; }
+      body::before { display: none; }
+      body > *:not(#printArea) { display: none !important; }
+      body { display: block; }
+      #printArea { display: block; }
+      #printArea img {
+        display: block;
+        margin: 0 auto;
+        max-width: 100%;
+        max-height: 9.5in;
+        width: auto;
+        height: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <video id="video" autoplay muted playsinline></video>
+
+  <div id="stage">
+    <canvas id="canvas"></canvas>
+    <div id="filterName"></div>
+    <div id="fps">FPS: --</div>
+    <div id="shotLabel"></div>
+    <div id="toast"></div>
+    <div id="countdown"></div>
+    <div id="howto"></div>
+  </div>
+
+  <div id="controls">
+    <button id="groupBtn">Group mode: off</button>
+    <button id="photoBtn">Start Photobooth</button>
+  </div>
+
+  <div id="status"></div>
+  <div id="flash"></div>
+
+  <div id="results">
+    <h2>Choose your layout</h2>
+    <div id="layoutBtns">
+      <button class="layoutBtn active" data-layout="vertical">
+        <svg viewBox="0 0 48 48"><rect x="14" y="3" width="20" height="9"/><rect x="14" y="14" width="20" height="9"/><rect x="14" y="25" width="20" height="9"/><rect x="14" y="36" width="20" height="9"/></svg>
+        Vertical strip
+      </button>
+      <button class="layoutBtn" data-layout="horizontal">
+        <svg viewBox="0 0 48 48"><rect x="2" y="17" width="9" height="14"/><rect x="13" y="17" width="9" height="14"/><rect x="24" y="17" width="9" height="14"/><rect x="35" y="17" width="9" height="14"/></svg>
+        Horizontal strip
+      </button>
+      <button class="layoutBtn" data-layout="square">
+        <svg viewBox="0 0 48 48"><rect x="6" y="8" width="16" height="14"/><rect x="26" y="8" width="16" height="14"/><rect x="6" y="26" width="16" height="14"/><rect x="26" y="26" width="16" height="14"/></svg>
+        Square grid
+      </button>
+    </div>
+    <div id="themeBtns">
+      <button class="themeBtn active" data-theme="neon">Black Neon</button>
+      <button class="themeBtn" data-theme="polaroid">White Polaroid</button>
+    </div>
+    <canvas id="sheet"></canvas>
+    <input id="captionInput" type="text" value="Hand Photobooth" maxlength="30" placeholder="Caption">
+    <div id="actions">
+      <button class="actionBtn" id="downloadBtn">Save</button>
+      <button class="actionBtn" id="printBtn">Print</button>
+      <button class="actionBtn" id="retakeBtn">Retake</button>
+    </div>
+  </div>
+
+  <div id="printArea"><img id="printImg" alt=""></div>
+
+  <script type="module">
+    import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+    // ---- settings you can change ----
+    const DELEGATE = "CPU";           // "CPU" or "GPU" (if one fails, the other is tried automatically)
+    const DETECT_EVERY = 2;           // detect hands every Nth frame (3 = faster video, hands update slower)
+    const FX_EVERY = 2;               // refresh the filter picture every Nth frame (1 = smoothest, 3 = fastest)
+    const NORMAL_HANDS = 2;           // hands tracked normally
+    const GROUP_HANDS = 4;            // hands tracked when Group mode is on (you + friends)
+    const SHOW_FPS = false;           // true = show the FPS counter
+    const SHOW_FILTER_NAME = true;    // set to false to hide the filter name
+    const PINCH_ON = 0.3;             // smaller = you must pinch tighter
+    const PINCH_OFF = 0.6;            // how far you must open to pinch again
+    const PINCH_COOLDOWN = 600;       // milliseconds before it can change again
+    const TOTAL_SHOTS = 4;            // how many photos per session
+    const COUNTDOWN_SECONDS = 3;      // countdown before EACH photo
+    const OUTLINE_IN_PHOTO = true;    // true = the outline is saved in the photo, so you can see the filter area
+    const OUTLINE_COLOR = "#ffffff";  // outline color (white)
+    const OUTLINE_SHADOW = true;      // a faint shadow so the white line shows on bright filters
+    const PINKY_HOLD_MS = 400;        // how long to hold the pinky up to take a photo
+    const PINKY_UP_RATIO = 1.2;       // bigger = pinky must be raised straighter
+
+    const MAX_DISPLAY_WIDTH = 960;    // biggest the camera picture gets on big screens
+    const STAGE_PAD = 22;             // must match the padding of #stage in the CSS
+    const FX_SIZE = 320;              // filters are drawn at this size (longest side), then stretched. 240 = faster
+    const CARTOON_EDGE = 140;         // smaller = more black outlines in Cartoon
+    const NEON_EDGE = 60;             // smaller = more glowing lines in Neon Glow
+
+    // photo card sizes (in pixels)
+    const SLOT_LONG = 600;            // long side of each photo
+    const SLOT_SHORT = 450;           // short side of each photo
+    const MARGIN = 54;                // space between the card edge and the photos
+    const GAP = 30;                   // space between photos
+    const CAPTION_H = 150;            // bottom area with the caption
+    const OUTER = 28;                 // cream border around the black card
+    const CARD_RADIUS = 44;           // round corners of the black card
+    const PAPER = "#ebe5d5";          // cream color (same as --paper in the CSS)
+    // ----------------------------------
+
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const filterLabel = document.getElementById("filterName");
+    const fpsLabel = document.getElementById("fps");
+    const toast = document.getElementById("toast");
+    const statusLabel = document.getElementById("status");
+    const shotLabel = document.getElementById("shotLabel");
+    const howto = document.getElementById("howto");
+    const photoBtn = document.getElementById("photoBtn");
+    const groupBtn = document.getElementById("groupBtn");
+    const countdownLabel = document.getElementById("countdown");
+    const flash = document.getElementById("flash");
+
+    const results = document.getElementById("results");
+    const sheet = document.getElementById("sheet");
+    const captionInput = document.getElementById("captionInput");
+    const printImg = document.getElementById("printImg");
+
+    const isTouch = window.matchMedia("(pointer: coarse)").matches;
+
+    // the handwritten instructions on the camera frame
+    const idleHint = isTouch
+      ? "1. make an L with both hands to frame your shot\n2. pinch to change the filter, twist a hand for two\n3. tap start or raise your pinky for each photo"
+      : "1. make an L with both hands to frame your shot\n2. pinch to change the filter, twist a hand for two\n3. raise your pinky to take each photo";
+    howto.textContent = idleHint;
+
+    fpsLabel.style.display = SHOW_FPS ? "block" : "none";
+    let frameCount = 0;
+    let fpsTime = performance.now();
+
+    function setStatus(text) {
+      statusLabel.textContent = text;
+    }
+
+    // make the camera panel as big as possible without leaving the screen
+    function fitCanvas() {
+      if (!canvas.width) return;
+      const gap = 14;
+      const roomW = window.innerWidth - 2 * (STAGE_PAD + gap);
+      const roomH = window.innerHeight - 2 * (STAGE_PAD + gap) - 80;   // 80 = space for the buttons
+      const scale = Math.max(
+        0.1,
+        Math.min(roomW / canvas.width, roomH / canvas.height, MAX_DISPLAY_WIDTH / canvas.width)
+      );
+      canvas.style.width = Math.floor(canvas.width * scale) + "px";
+      canvas.style.height = Math.floor(canvas.height * scale) + "px";
+    }
+    window.addEventListener("resize", fitCanvas);
+    window.addEventListener("orientationchange", () => setTimeout(fitCanvas, 300));
+
+    // ================= FILTER EFFECTS =================
+    // Every filter is a function that draws the whole video frame with its effect
+    // onto a SMALL canvas (d). Later, we stretch it and show it only inside your hand frame.
+
+    // Safari (iPhone / iPad) can't use "ctx.filter", so we test for it.
+    // If it is missing, filters are done pixel by pixel instead.
+    const HAS_FILTER = (() => {
+      try {
+        const c = document.createElement("canvas");
+        c.width = 1;
+        c.height = 1;
+        const g = c.getContext("2d", { willReadFrequently: true });
+        g.filter = "invert(100%)";
+        g.fillStyle = "#000";
+        g.fillRect(0, 0, 1, 1);
+        return g.getImageData(0, 0, 1, 1).data[0] > 200;
+      } catch (e) {
+        return false;
+      }
+    })();
+
+    let W = 320;   // effect size, set when the camera starts
+    let H = 240;
+
+    function makeEffect() {
+      const c = document.createElement("canvas");
+      c.width = W;
+      c.height = H;
+      return { canvas: c, ctx: c.getContext("2d") };
+    }
+    const effects = [makeEffect(), makeEffect()];   // one per filter (2 when you twist a hand)
+    const fxKey = [-1, -1];                         // which filter each effect canvas currently shows
+
+    // small canvas for filters that need to read pixels
+    const small = document.createElement("canvas");
+    small.width = W;
+    small.height = H;
+    const sctx = small.getContext("2d", { willReadFrequently: true });
+
+    // canvas that holds the glowing lines of Neon Glow
+    const edgeCanvas = document.createElement("canvas");
+    edgeCanvas.width = W;
+    edgeCanvas.height = H;
+    const edgeCtx = edgeCanvas.getContext("2d");
+    let edgeImg = edgeCtx.createImageData(W, H);
+
+    // spare canvas used by RGB Split
+    const tmp = document.createElement("canvas");
+    tmp.width = W;
+    tmp.height = H;
+    const tctx = tmp.getContext("2d");
+
+    // tiny canvas used for blur and pixelate
+    const blurCanvas = document.createElement("canvas");
+    const bctx = blurCanvas.getContext("2d");
+
+    let lumArr = new Uint8ClampedArray(W * H);   // brightness of each pixel
+    let magArr = new Uint16Array(W * H);         // how strong the edge is at each pixel
+    let bulgeImg = null;
+
+    function makeLinePattern(color) {
+      const c = document.createElement("canvas");
+      c.width = 2;
+      c.height = 2;
+      const g = c.getContext("2d");
+      g.fillStyle = color;
+      g.fillRect(0, 0, 2, 1);
+      return ctx.createPattern(c, "repeat");
+    }
+    const scanLines = makeLinePattern("rgba(0,0,0,0.28)");
+    const holoLines = makeLinePattern("rgba(0,40,90,0.35)");
+
+    // called when the camera starts (or turns sideways): sizes everything to match the video
+    function setupEffects() {
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      const k = FX_SIZE / Math.max(vw, vh);
+      W = Math.max(2, Math.round(vw * k));
+      H = Math.max(2, Math.round(vh * k));
+
+      for (const e of effects) {
+        e.canvas.width = W;
+        e.canvas.height = H;
+      }
+      fxKey[0] = -1;
+      fxKey[1] = -1;
+      small.width = W;
+      small.height = H;
+      edgeCanvas.width = W;
+      edgeCanvas.height = H;
+      tmp.width = W;
+      tmp.height = H;
+      edgeImg = edgeCtx.createImageData(W, H);
+      lumArr = new Uint8ClampedArray(W * H);
+      magArr = new Uint16Array(W * H);
+      bulgeImg = null;
+    }
+
+    // copy the video into the small canvas and read its pixels
+    function grabSmall() {
+      if (HAS_FILTER) {
+        sctx.filter = "blur(1px)";   // smooths camera noise
+        sctx.drawImage(video, 0, 0, W, H);
+        sctx.filter = "none";
+      } else {
+        sctx.drawImage(video, 0, 0, W, H);
+      }
+      return sctx.getImageData(0, 0, W, H);
+    }
+
+    // find edges (where brightness changes a lot) using the Sobel method
+    function analyze(px) {
+      const n = W * H;
+      for (let i = 0, p = 0; i < n; i++, p += 4) {
+        lumArr[i] = (px[p] * 77 + px[p + 1] * 150 + px[p + 2] * 29) >> 8;
+      }
+      magArr.fill(0);
+      for (let y = 1; y < H - 1; y++) {
+        for (let x = 1; x < W - 1; x++) {
+          const i = y * W + x;
+          const tl = lumArr[i - W - 1], tc = lumArr[i - W], tr = lumArr[i - W + 1];
+          const ml = lumArr[i - 1], mr = lumArr[i + 1];
+          const bl = lumArr[i + W - 1], bc = lumArr[i + W], br = lumArr[i + W + 1];
+          const gx = tr + 2 * mr + br - tl - 2 * ml - bl;
+          const gy = bl + 2 * bc + br - tl - 2 * tc - tr;
+          magArr[i] = Math.abs(gx) + Math.abs(gy);
+        }
+      }
+    }
+
+    // ---- color adjustments that work on every browser ----
+    // ops is a list like [["gray", 1], ["contrast", 1.5]]
+    // names: gray, sepia, invert, bright, contrast, sat, hue (degrees)
+    function cssOp(op) {
+      const name = op[0];
+      const v = op[1];
+      if (name === "gray") return "grayscale(" + v * 100 + "%)";
+      if (name === "sepia") return "sepia(" + v * 100 + "%)";
+      if (name === "invert") return "invert(" + v * 100 + "%)";
+      if (name === "bright") return "brightness(" + v * 100 + "%)";
+      if (name === "contrast") return "contrast(" + v * 100 + "%)";
+      if (name === "sat") return "saturate(" + v * 100 + "%)";
+      if (name === "hue") return "hue-rotate(" + v + "deg)";
+      return "";
+    }
+
+    function hueMatrix(deg) {
+      const a = deg * Math.PI / 180;
+      const c = Math.cos(a);
+      const s = Math.sin(a);
+      return [
+        0.213 + c * 0.787 - s * 0.213, 0.715 - c * 0.715 - s * 0.715, 0.072 - c * 0.072 + s * 0.928,
+        0.213 - c * 0.213 + s * 0.143, 0.715 + c * 0.285 + s * 0.140, 0.072 - c * 0.072 - s * 0.283,
+        0.213 - c * 0.213 - s * 0.787, 0.715 - c * 0.715 + s * 0.715, 0.072 + c * 0.928 + s * 0.072
+      ];
+    }
+
+    const cl = (x) => (x < 0 ? 0 : x > 255 ? 255 : x);
+
+    // draw the video with the color adjustments applied
+    function adjust(d, ops) {
+      // fast way (Chrome, Edge, Firefox)
+      if (HAS_FILTER) {
+        d.filter = ops.map(cssOp).join(" ");
+        d.drawImage(video, 0, 0, W, H);
+        d.filter = "none";
+        return;
+      }
+
+      // slow way (Safari): change every pixel ourselves
+      sctx.drawImage(video, 0, 0, W, H);
+      const img = sctx.getImageData(0, 0, W, H);
+      const px = img.data;
+      const prepared = ops.map((o) => ({ n: o[0], v: o[1], m: o[0] === "hue" ? hueMatrix(o[1]) : null }));
+
+      for (let p = 0; p < px.length; p += 4) {
+        let r = px[p], g = px[p + 1], b = px[p + 2];
+        for (let k = 0; k < prepared.length; k++) {
+          const o = prepared[k];
+          const v = o.v;
+          if (o.n === "gray") {
+            const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            r += (l - r) * v; g += (l - g) * v; b += (l - b) * v;
+          } else if (o.n === "sepia") {
+            const sr = 0.393 * r + 0.769 * g + 0.189 * b;
+            const sg = 0.349 * r + 0.686 * g + 0.168 * b;
+            const sb = 0.272 * r + 0.534 * g + 0.131 * b;
+            r += (sr - r) * v; g += (sg - g) * v; b += (sb - b) * v;
+          } else if (o.n === "invert") {
+            r += (255 - 2 * r) * v; g += (255 - 2 * g) * v; b += (255 - 2 * b) * v;
+          } else if (o.n === "bright") {
+            r *= v; g *= v; b *= v;
+          } else if (o.n === "contrast") {
+            r = (r - 128) * v + 128; g = (g - 128) * v + 128; b = (b - 128) * v + 128;
+          } else if (o.n === "sat") {
+            const l = 0.213 * r + 0.715 * g + 0.072 * b;
+            r = l + (r - l) * v; g = l + (g - l) * v; b = l + (b - l) * v;
+          } else if (o.n === "hue") {
+            const m = o.m;
+            const nr = m[0] * r + m[1] * g + m[2] * b;
+            const ng = m[3] * r + m[4] * g + m[5] * b;
+            const nb = m[6] * r + m[7] * g + m[8] * b;
+            r = nr; g = ng; b = nb;
+          }
+          r = cl(r); g = cl(g); b = cl(b);
+        }
+        px[p] = r; px[p + 1] = g; px[p + 2] = b;
+      }
+      sctx.putImageData(img, 0, 0);
+      d.drawImage(small, 0, 0, W, H);
+    }
+
+    // draw something tiny, then stretch it back: gives blur (smooth) or pixelate (blocky)
+    function toTiny(src, factor) {
+      const bw = Math.max(2, Math.round(W / factor));
+      const bh = Math.max(2, Math.round(H / factor));
+      if (blurCanvas.width !== bw || blurCanvas.height !== bh) {
+        blurCanvas.width = bw;
+        blurCanvas.height = bh;
+      }
+      bctx.drawImage(src, 0, 0, bw, bh);
+    }
+    function blurDraw(d, src, factor) {
+      toTiny(src, factor);
+      d.imageSmoothingEnabled = true;
+      d.drawImage(blurCanvas, 0, 0, W, H);
+    }
+
+    // ---- color maps (used by Thermal, Sunset, Pop Art) ----
+    function makeLUT(stops) {
+      const lut = new Uint8ClampedArray(256 * 3);
+      for (let i = 0; i < 256; i++) {
+        const v = i / 255;
+        let k = 0;
+        while (k < stops.length - 2 && v > stops[k + 1][0]) k++;
+        const a = stops[k];
+        const b = stops[k + 1];
+        const f = (v - a[0]) / (b[0] - a[0]);
+        for (let c = 0; c < 3; c++) {
+          lut[i * 3 + c] = a[c + 1] + (b[c + 1] - a[c + 1]) * f;
+        }
+      }
+      return lut;
+    }
+
+    const thermalLUT = makeLUT([
+      [0.00, 10, 0, 60],
+      [0.25, 60, 20, 190],
+      [0.45, 200, 20, 130],
+      [0.65, 255, 90, 0],
+      [0.85, 255, 210, 20],
+      [1.00, 255, 255, 220]
+    ]);
+
+    const sunsetLUT = makeLUT([
+      [0.00, 25, 10, 70],
+      [0.40, 150, 30, 140],
+      [0.70, 255, 110, 80],
+      [1.00, 255, 235, 160]
+    ]);
+
+    // Pop Art: only 4 flat colors
+    const popLUT = (() => {
+      const colors = [[15, 20, 90], [220, 30, 120], [255, 205, 40], [255, 255, 240]];
+      const lut = new Uint8ClampedArray(256 * 3);
+      for (let i = 0; i < 256; i++) {
+        const band = Math.min(3, (i / 64) | 0);
+        lut[i * 3] = colors[band][0];
+        lut[i * 3 + 1] = colors[band][1];
+        lut[i * 3 + 2] = colors[band][2];
+      }
+      return lut;
+    })();
+
+    // paint the picture using a color map, based on how bright each pixel is
+    function lutFilter(d, lut) {
+      const img = grabSmall();
+      const px = img.data;
+      for (let p = 0; p < px.length; p += 4) {
+        const lum = (px[p] * 77 + px[p + 1] * 150 + px[p + 2] * 29) >> 8;
+        const v = Math.max(0, Math.min(255, (lum - 20) * 1.6)) | 0;
+        px[p] = lut[v * 3];
+        px[p + 1] = lut[v * 3 + 1];
+        px[p + 2] = lut[v * 3 + 2];
+      }
+      sctx.putImageData(img, 0, 0);
+      d.drawImage(small, 0, 0, W, H);
+    }
+
+    // ---- the filters ----
+
+    // Neon Glow: dark picture with glowing colored outlines
+    function neonGlow(d, t) {
+      adjust(d, [["bright", 0.4], ["sat", 1.5]]);
+
+      const img = grabSmall();
+      analyze(img.data);
+      const out = edgeImg.data;
+      out.fill(0);
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i = y * W + x;
+          const m = magArr[i];
+          if (m > NEON_EDGE) {
+            const mix = (Math.sin((x / W) * 5 + (y / H) * 3 + t / 500) + 1) / 2;
+            const p = i * 4;
+            out[p] = 255 * mix;                    // cyan <-> magenta
+            out[p + 1] = 255 * (1 - mix);
+            out[p + 2] = 255 - 55 * mix;
+            out[p + 3] = Math.min(255, (m - NEON_EDGE) * 3 + 80);
+          }
+        }
+      }
+      edgeCtx.putImageData(edgeImg, 0, 0);
+
+      d.globalCompositeOperation = "lighter";
+      blurDraw(d, edgeCanvas, 3);            // soft glow
+      d.drawImage(edgeCanvas, 0, 0, W, H);   // sharp line
+      d.globalCompositeOperation = "source-over";
+    }
+
+    // Glass: clear, soft, with a shiny sheen
+    function glass(d) {
+      blurDraw(d, video, 2);
+      d.fillStyle = "rgba(255,255,255,0.18)";
+      d.fillRect(0, 0, W, H);
+      const g = d.createLinearGradient(0, 0, W, H);
+      g.addColorStop(0, "rgba(255,255,255,0.35)");
+      g.addColorStop(0.35, "rgba(255,255,255,0)");
+      g.addColorStop(0.65, "rgba(255,255,255,0)");
+      g.addColorStop(1, "rgba(255,255,255,0.25)");
+      d.fillStyle = g;
+      d.fillRect(0, 0, W, H);
+    }
+
+    // Night Vision: bright green with scanlines
+    function nightVision(d) {
+      adjust(d, [["gray", 1], ["contrast", 1.5], ["bright", 1.4]]);
+      d.globalCompositeOperation = "multiply";
+      d.fillStyle = "rgb(60,255,60)";
+      d.fillRect(0, 0, W, H);
+      d.globalCompositeOperation = "source-over";
+      d.fillStyle = scanLines;
+      d.fillRect(0, 0, W, H);
+    }
+
+    // Cartoon: flat colors with black outlines
+    function cartoon(d) {
+      const img = grabSmall();
+      const px = img.data;
+      analyze(px);
+      const STEP = 64;
+      for (let i = 0, p = 0; i < magArr.length; i++, p += 4) {
+        if (magArr[i] > CARTOON_EDGE) {
+          px[p] = px[p + 1] = px[p + 2] = 15;   // black outline
+        } else {
+          // a bit more color, then fewer colors
+          const l = (px[p] * 77 + px[p + 1] * 150 + px[p + 2] * 29) >> 8;
+          const r = cl(l + (px[p] - l) * 1.4);
+          const g = cl(l + (px[p + 1] - l) * 1.4);
+          const b = cl(l + (px[p + 2] - l) * 1.4);
+          px[p] = Math.round(r / STEP) * STEP;
+          px[p + 1] = Math.round(g / STEP) * STEP;
+          px[p + 2] = Math.round(b / STEP) * STEP;
+        }
+      }
+      sctx.putImageData(img, 0, 0);
+      d.drawImage(small, 0, 0, W, H);
+    }
+
+    // Hologram: blue see-through look with glitch strips and a moving light band
+    function hologram(d, t) {
+      adjust(d, [["gray", 1], ["contrast", 1.25], ["bright", 1.3]]);
+      d.globalCompositeOperation = "multiply";
+      d.fillStyle = "rgb(110,190,255)";
+      d.fillRect(0, 0, W, H);
+      d.globalCompositeOperation = "lighter";
+      d.fillStyle = "rgba(0,50,110,0.30)";
+      d.fillRect(0, 0, W, H);
+      d.globalCompositeOperation = "source-over";
+
+      // glitch strips that slide sideways
+      for (let k = 0; k < 3; k++) {
+        const y = ((t * 0.12 + k * 85) % H) | 0;
+        const h = 4 + k * 2;
+        const off = Math.sin(t / 180 + k * 2) * 6;
+        d.drawImage(d.canvas, 0, y, W, h, off, y, W, h);
+      }
+
+      d.fillStyle = holoLines;
+      d.fillRect(0, 0, W, H);
+
+      // bright band moving down
+      const by = (t * 0.1) % (H + 60) - 30;
+      const g = d.createLinearGradient(0, by - 20, 0, by + 20);
+      g.addColorStop(0, "rgba(160,225,255,0)");
+      g.addColorStop(0.5, "rgba(160,225,255,0.30)");
+      g.addColorStop(1, "rgba(160,225,255,0)");
+      d.fillStyle = g;
+      d.fillRect(0, by - 20, W, 40);
+    }
+
+    // Thermal: heat-camera colors
+    function thermal(d) {
+      lutFilter(d, thermalLUT);
+    }
+
+    // RGB Split: red, green and blue layers pulled apart
+    function splitChannels(d, off) {
+      d.fillStyle = "#000";
+      d.fillRect(0, 0, W, H);
+      d.globalCompositeOperation = "lighter";
+      const channels = [["rgb(255,0,0)", -off], ["rgb(0,255,0)", 0], ["rgb(0,0,255)", off]];
+      for (const [color, dx] of channels) {
+        tctx.globalCompositeOperation = "source-over";
+        tctx.drawImage(video, 0, 0, W, H);
+        tctx.globalCompositeOperation = "multiply";
+        tctx.fillStyle = color;
+        tctx.fillRect(0, 0, W, H);
+        d.drawImage(tmp, dx, 0);
+      }
+      d.globalCompositeOperation = "source-over";
+    }
+    function rgbSplit(d) {
+      splitChannels(d, 4);
+    }
+
+    // Glitch: RGB split plus random strips jumping sideways
+    function glitch(d) {
+      splitChannels(d, 5);
+      for (let k = 0; k < 5; k++) {
+        if (Math.random() < 0.4) continue;
+        const y = (Math.random() * H) | 0;
+        const h = 3 + ((Math.random() * 16) | 0);
+        const off = (Math.random() - 0.5) * 40;
+        d.drawImage(d.canvas, 0, y, W, h, off, y, W, h);
+      }
+    }
+
+    // Sketch: pencil drawing on white paper
+    function sketch(d) {
+      const img = grabSmall();
+      const px = img.data;
+      analyze(px);
+      for (let i = 0, p = 0; i < magArr.length; i++, p += 4) {
+        const v = 255 - Math.min(255, magArr[i] * 1.6);
+        px[p] = v;
+        px[p + 1] = v;
+        px[p + 2] = v;
+        px[p + 3] = 255;
+      }
+      sctx.putImageData(img, 0, 0);
+      d.drawImage(small, 0, 0, W, H);
+    }
+
+    // Pop Art: 4 flat colors
+    function popArt(d) {
+      lutFilter(d, popLUT);
+    }
+
+    // Sunset: purple, pink and orange glow
+    function sunset(d) {
+      lutFilter(d, sunsetLUT);
+    }
+
+    // Vintage: old warm photo with dark corners
+    function vintage(d) {
+      adjust(d, [["sepia", 0.6], ["contrast", 1.1], ["sat", 1.2], ["bright", 1.05]]);
+      const g = d.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.25, W / 2, H / 2, Math.max(W, H) * 0.75);
+      g.addColorStop(0, "rgba(0,0,0,0)");
+      g.addColorStop(1, "rgba(0,0,0,0.6)");
+      d.fillStyle = g;
+      d.fillRect(0, 0, W, H);
+    }
+
+    // Pixelate: big blocky pixels
+    function pixelate(d) {
+      toTiny(video, 8);
+      d.imageSmoothingEnabled = false;
+      d.drawImage(blurCanvas, 0, 0, W, H);
+      d.imageSmoothingEnabled = true;
+    }
+
+    // Mirror: the left half is copied (flipped) onto the right half
+    function mirror(d) {
+      d.drawImage(video, 0, 0, W, H);
+      d.save();
+      d.translate(W, 0);
+      d.scale(-1, 1);
+      d.drawImage(video, 0, 0, video.videoWidth / 2, video.videoHeight, 0, 0, W / 2, H);
+      d.restore();
+    }
+
+    // Bulge: funny fisheye in the middle
+    function bulge(d) {
+      sctx.drawImage(video, 0, 0, W, H);
+      const src = sctx.getImageData(0, 0, W, H).data;
+      if (!bulgeImg || bulgeImg.width !== W || bulgeImg.height !== H) {
+        bulgeImg = new ImageData(W, H);
+      }
+      const out = bulgeImg.data;
+      for (let y = 0; y < H; y++) {
+        const ny = (y / H - 0.5) * 2;
+        for (let x = 0; x < W; x++) {
+          const nx = (x / W - 0.5) * 2;
+          const r = Math.sqrt(nx * nx + ny * ny);
+          let sx = x;
+          let sy = y;
+          if (r > 0 && r < 1) {
+            const k = Math.pow(r, 1.6) / r;   // look closer to the center = zoom in
+            sx = ((nx * k) / 2 + 0.5) * W;
+            sy = ((ny * k) / 2 + 0.5) * H;
+          }
+          const si = (Math.min(H - 1, sy | 0) * W + Math.min(W - 1, sx | 0)) * 4;
+          const oi = (y * W + x) * 4;
+          out[oi] = src[si];
+          out[oi + 1] = src[si + 1];
+          out[oi + 2] = src[si + 2];
+          out[oi + 3] = 255;
+        }
+      }
+      sctx.putImageData(bulgeImg, 0, 0);
+      d.drawImage(small, 0, 0, W, H);
+    }
+
+    // ---- the list of filters (pinch cycles through them in this order) ----
+    const filters = [
+      { name: "Neon Glow",     apply: neonGlow },
+      { name: "Glass",         apply: glass },
+      { name: "Night Vision",  apply: nightVision },
+      { name: "Cartoon",       apply: cartoon },
+      { name: "Hologram",      apply: hologram },
+      { name: "Thermal",       apply: thermal },
+      { name: "RGB Split",     apply: rgbSplit },
+      { name: "Glitch",        apply: glitch },
+      { name: "Sketch",        apply: sketch },
+      { name: "Pop Art",       apply: popArt },
+      { name: "Sunset",        apply: sunset },
+      { name: "Vintage",       apply: vintage },
+      { name: "Pixelate",      apply: pixelate },
+      { name: "Mirror",        apply: mirror },
+      { name: "Bulge",         apply: bulge },
+      { name: "Black & White", apply: (d) => adjust(d, [["gray", 1]]) },
+      { name: "Sepia",         apply: (d) => adjust(d, [["sepia", 1]]) },
+      { name: "Invert",        apply: (d) => adjust(d, [["invert", 1]]) },
+      { name: "Color Shift",   apply: (d) => adjust(d, [["hue", 120], ["sat", 2]]) },
+      { name: "Blur",          apply: (d) => blurDraw(d, video, 5) },
+      { name: "Bright Pop",    apply: (d) => adjust(d, [["contrast", 1.5], ["sat", 2], ["bright", 1.1]]) }
+    ];
+    let filterIndex = 0;
+
+    // ================= END OF FILTER EFFECTS =================
+
+    const layouts = {
+      vertical:   { cols: 1, rows: 4 },
+      horizontal: { cols: 4, rows: 1 },
+      square:     { cols: 2, rows: 2 }
+    };
+    let currentLayout = "vertical";
+    let cardTheme = "neon";        // "neon" = black card with white glowing rectangle, "polaroid" = white card
+
+    let handLandmarker = null;
+    let lastVideoTime = -1;
+    let lastResult = null;
+    let frameNumber = 0;
+    let drawing = false;
+
+    let wasPinching = false;
+    let lastChange = 0;
+
+    let pinkyStart = 0;        // when the pinky first went up (0 = not up)
+    let pinkyUsed = false;     // true after it triggered, until the pinky goes down
+
+    let busy = false;              // true while the 4-photo session is running
+    let waiting = false;           // true while waiting for you to raise your pinky for the next photo
+    let triggerResolve = null;     // lets the pinky / button / C key continue the session
+    let resultsOpen = false;       // true while the results screen is showing
+    let captureRequested = false;
+    let captureResolve = null;
+    let shots = [];                // the 4 captured photos
+    let sessionDate = "";
+
+    let twisted = false;           // true when your frame is twisted into an X (2 filters)
+    let groupMode = false;         // true = 4 hands are tracked
+    let toastTimer;
+
+    // the text for the current filter(s), like "Neon Glow" or "Neon Glow + Glass"
+    function filterText() {
+      const a = filters[filterIndex].name;
+      if (!twisted) return a;
+      return a + " + " + filters[(filterIndex + 1) % filters.length].name;
+    }
+
+    function updateFilterLabel() {
+      if (!SHOW_FILTER_NAME) {
+        filterLabel.textContent = "";
+        return;
+      }
+      filterLabel.textContent = (twisted ? "Filters: " : "Filter: ") + filterText();
+    }
+    updateFilterLabel();
+
+    // big name that pops up for a moment on the camera
+    function showToast(text) {
+      toast.textContent = text;
+      toast.style.opacity = "1";
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toast.style.opacity = "0";
+      }, 900);
+    }
+
+    function nextFilter() {
+      filterIndex = (filterIndex + 1) % filters.length;
+      updateFilterLabel();
+      showToast(filterText());
+    }
+
+    // the handwritten text is shown when waiting for you, and hidden during a countdown or on the results screen
+    function updateHint() {
+      const hide = resultsOpen || (busy && !waiting);
+      howto.style.visibility = hide ? "hidden" : "visible";
+    }
+    updateHint();
+
+    // Group mode: track 4 hands so you and friends can make a bigger square.
+    // it is off by default because tracking 4 hands is heavier.
+    async function setGroupMode(on) {
+      groupMode = on;
+      groupBtn.textContent = "Group mode: " + (on ? "on" : "off");
+      groupBtn.classList.toggle("on", on);
+      if (handLandmarker) {
+        try {
+          await handLandmarker.setOptions({ numHands: on ? GROUP_HANDS : NORMAL_HANDS });
+        } catch (err) {
+          // ignore
+        }
+      }
+      showToast(on ? "group mode on: use 4 hands" : "group mode off");
+    }
+
+    // ---- photo session (4 photos, one pinky raise for each) ----
+    function countdown(seconds) {
+      return new Promise((resolve) => {
+        let n = seconds;
+        countdownLabel.textContent = n;
+        const timer = setInterval(() => {
+          n--;
+          if (n > 0) {
+            countdownLabel.textContent = n;
+          } else {
+            clearInterval(timer);
+            countdownLabel.textContent = "";
+            resolve();
+          }
+        }, 1000);
+      });
+    }
+
+    // ask the draw loop to save the next frame, and wait until it did
+    function captureFrame() {
+      return new Promise((resolve) => {
+        captureResolve = resolve;
+        captureRequested = true;
+      });
+    }
+
+    // wait until you raise your pinky (or press the button / C key)
+    function waitForTrigger() {
+      return new Promise((resolve) => {
+        triggerResolve = resolve;
+      });
+    }
+
+    // the pinky, the button and the C key all call this:
+    // if the session is waiting for the next photo, it continues. otherwise it starts a new session.
+    function trigger() {
+      if (triggerResolve) {
+        const go = triggerResolve;
+        triggerResolve = null;
+        go();
+      } else {
+        startSession();
+      }
+    }
+
+    async function startSession() {
+      if (busy || resultsOpen || !drawing) return;
+      busy = true;
+      shots = [];
+      updateHint();
+
+      for (let i = 0; i < TOTAL_SHOTS; i++) {
+        shotLabel.textContent = "Photo " + (i + 1) + " of " + TOTAL_SHOTS;
+
+        // photos 2, 3 and 4 wait for you to raise your pinky again
+        if (i > 0) {
+          waiting = true;
+          howto.textContent = isTouch
+            ? "raise your pinky or tap the button for photo " + (i + 1)
+            : "raise your pinky for photo " + (i + 1);
+          photoBtn.textContent = "Take Photo " + (i + 1) + " of " + TOTAL_SHOTS;
+          updateHint();
+          await waitForTrigger();
+          waiting = false;
+          updateHint();
+        }
+
+        await countdown(COUNTDOWN_SECONDS);
+        await captureFrame();
+      }
+
+      shotLabel.textContent = "";
+      howto.textContent = idleHint;
+      photoBtn.textContent = "Start Photobooth";
+      sessionDate = new Date().toLocaleDateString(undefined, {
+        year: "numeric", month: "short", day: "numeric"
+      });
+      busy = false;
+      openResults();
+    }
+
+    // copy the current canvas into a new one (flipped, so it matches what you see)
+    function grabShot() {
+      captureRequested = false;
+
+      const out = document.createElement("canvas");
+      out.width = canvas.width;
+      out.height = canvas.height;
+      const outCtx = out.getContext("2d");
+      outCtx.translate(out.width, 0);
+      outCtx.scale(-1, 1);
+      outCtx.drawImage(canvas, 0, 0);
+      shots.push(out);
+
+      // white flash effect
+      flash.style.transition = "none";
+      flash.style.opacity = "1";
+      setTimeout(() => {
+        flash.style.transition = "opacity 0.4s";
+        flash.style.opacity = "0";
+      }, 50);
+
+      if (captureResolve) {
+        const done = captureResolve;
+        captureResolve = null;
+        done();
+      }
+    }
+
+    // ---- results screen ----
+    function openResults() {
+      resultsOpen = true;
+      document.body.classList.add("results-open");
+      results.classList.add("show");
+      updateHint();
+      drawSheet();
+    }
+
+    function closeResults() {
+      resultsOpen = false;
+      document.body.classList.remove("results-open");
+      results.classList.remove("show");
+      lastResult = null;
+      updateHint();
+      fitCanvas();
+    }
+
+    // draw a photo into a slot, cropping the edges if the shape doesn't match
+    function drawCover(s, img, x, y, w, h) {
+      const imgRatio = img.width / img.height;
+      const slotRatio = w / h;
+      let sx = 0;
+      let sy = 0;
+      let sw = img.width;
+      let sh = img.height;
+      if (imgRatio > slotRatio) {
+        sw = img.height * slotRatio;
+        sx = (img.width - sw) / 2;
+      } else {
+        sh = img.width / slotRatio;
+        sy = (img.height - sh) / 2;
+      }
+      s.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+    }
+
+    // a rectangle with round corners
+    function roundedRect(s, x, y, w, h, r) {
+      s.beginPath();
+      s.moveTo(x + r, y);
+      s.arcTo(x + w, y, x + w, y + h, r);
+      s.arcTo(x + w, y + h, x, y + h, r);
+      s.arcTo(x, y + h, x, y, r);
+      s.arcTo(x, y, x + w, y, r);
+      s.closePath();
+    }
+
+    // draw the card with the 4 photos
+    function drawSheet() {
+      const L = layouts[currentLayout];
+      const neon = cardTheme === "neon";
+
+      // phones take tall photos, laptops take wide ones: the card follows the shape
+      const portrait = shots.length > 0 && shots[0].height > shots[0].width;
+      const slotW = portrait ? SLOT_SHORT : SLOT_LONG;
+      const slotH = portrait ? SLOT_LONG : SLOT_SHORT;
+
+      const w = MARGIN * 2 + L.cols * slotW + (L.cols - 1) * GAP;
+      const h = MARGIN + L.rows * slotH + (L.rows - 1) * GAP + CAPTION_H;
+      const outer = neon ? OUTER : 0;
+      sheet.width = w + outer * 2;
+      sheet.height = h + outer * 2;
+      const s = sheet.getContext("2d");
+
+      if (neon) {
+        // cream paper, then a black card with round corners
+        s.fillStyle = PAPER;
+        s.fillRect(0, 0, sheet.width, sheet.height);
+        s.translate(outer, outer);
+        roundedRect(s, 0, 0, w, h, CARD_RADIUS);
+        s.fillStyle = "#050505";
+        s.fill();
+      } else {
+        s.fillStyle = "#fbfaf6";
+        s.fillRect(0, 0, w, h);
+      }
+
+      // photos
+      shots.forEach((img, i) => {
+        const col = i % L.cols;
+        const row = Math.floor(i / L.cols);
+        const x = MARGIN + col * (slotW + GAP);
+        const y = MARGIN + row * (slotH + GAP);
+        drawCover(s, img, x, y, slotW, slotH);
+
+        if (neon) {
+          s.save();
+          s.shadowColor = "#ffffff";
+          s.shadowBlur = 10;
+          s.strokeStyle = "#ffffff";
+          s.lineWidth = 2;
+          s.strokeRect(x, y, slotW, slotH);
+          s.restore();
+        } else {
+          s.strokeStyle = "rgba(0,0,0,0.12)";
+          s.lineWidth = 2;
+          s.strokeRect(x, y, slotW, slotH);
+        }
+      });
+
+      // the white glowing rectangle around everything
+      if (neon) {
+        s.save();
+        s.strokeStyle = "#ffffff";
+        s.shadowColor = "#ffffff";
+        s.shadowBlur = 30;
+        s.lineWidth = 5;
+        s.strokeRect(20, 20, w - 40, h - 40);
+        s.shadowBlur = 10;
+        s.lineWidth = 3;
+        s.strokeRect(20, 20, w - 40, h - 40);
+        s.restore();
+      }
+
+      // caption (shrinks if it is too long for the card)
+      const handwriting = "'Caveat','Segoe Print','Bradley Hand','Comic Sans MS',cursive";
+      const clean = "'Helvetica Neue',Helvetica,Arial,sans-serif";
+      const fontFamily = neon ? clean : handwriting;
+      const text = neon ? captionInput.value.toLowerCase() : captionInput.value;
+      s.textAlign = "center";
+      s.textBaseline = "middle";
+      s.fillStyle = neon ? "#ffffff" : "#333";
+      let size = 60;
+      s.font = size + "px " + fontFamily;
+      while (s.measureText(text).width > w - MARGIN * 2 && size > 16) {
+        size -= 2;
+        s.font = size + "px " + fontFamily;
+      }
+      s.fillText(text, w / 2, h - CAPTION_H + 55);
+
+      // date
+      if (neon) {
+        s.fillStyle = "#bdb7a7";
+        s.font = "26px 'Courier New', monospace";
+        s.fillText(sessionDate.toLowerCase(), w / 2, h - CAPTION_H + 108);
+      } else {
+        s.fillStyle = "#888";
+        s.font = "28px " + handwriting;
+        s.fillText(sessionDate, w / 2, h - CAPTION_H + 108);
+      }
+    }
+
+    // layout buttons
+    document.querySelectorAll(".layoutBtn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        currentLayout = btn.dataset.layout;
+        document.querySelectorAll(".layoutBtn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        drawSheet();
+      });
+    });
+
+    // card style buttons
+    document.querySelectorAll(".themeBtn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        cardTheme = btn.dataset.theme;
+        document.querySelectorAll(".themeBtn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        drawSheet();
+      });
+    });
+
+    captionInput.addEventListener("input", drawSheet);
+
+    // Save: on phones it opens the share sheet (choose "Save Image"), on laptops it downloads
+    async function saveSheet() {
+      const blob = await new Promise((resolve) => sheet.toBlob(resolve, "image/png"));
+      const name = "hand-photobooth-" + currentLayout + "-" + Date.now() + ".png";
+      const file = new File([blob], name, { type: "image/png" });
+
+      if (isTouch && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file] });
+          return;
+        } catch (err) {
+          if (err && err.name === "AbortError") return;   // you closed the share sheet
+        }
+      }
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.download = name;
+      link.href = url;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+    document.getElementById("downloadBtn").addEventListener("click", saveSheet);
+
+    document.getElementById("printBtn").addEventListener("click", () => {
+      printImg.src = sheet.toDataURL("image/png");
+      setTimeout(() => window.print(), 150);
+    });
+
+    // Retake only goes back to the camera. It does NOT start the photoshoot.
+    document.getElementById("retakeBtn").addEventListener("click", () => {
+      closeResults();
+    });
+
+    // clicks on the results screen should not change the filter
+    results.addEventListener("click", (e) => e.stopPropagation());
+
+    // ---- buttons and keyboard ----
+    photoBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      trigger();
+    });
+
+    groupBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setGroupMode(!groupMode);
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.target.tagName === "INPUT") return;   // typing a caption
+      if (e.code === "Space") {
+        e.preventDefault();
+        nextFilter();
+      }
+      if (e.code === "KeyC") trigger();
+      if (e.code === "KeyG") setGroupMode(!groupMode);
+    });
+    document.addEventListener("click", nextFilter);
+
+    // ---- gestures ----
+    // distance between two landmark points, in real pixels (so it isn't stretched)
+    function dist(a, b) {
+      return Math.hypot((a.x - b.x) * canvas.width, (a.y - b.y) * canvas.height);
+    }
+
+    // PINCH changes the filter:
+    //  - only 1 hand in view: thumb tip (4) + index fingertip (8)
+    //  - 2 or more hands in view: thumb tip (4) + middle fingertip (12), because the thumb
+    //    and index fingertips are the corners of your frame
+    function checkPinch(result) {
+      if (resultsOpen) return;
+      const oneHand = result.landmarks.length === 1;
+      const otherTip = oneHand ? 8 : 12;
+      let pinching = false;
+
+      for (const hand of result.landmarks) {
+        const palmSize = dist(hand[0], hand[9]);
+        const ratio = dist(hand[4], hand[otherTip]) / palmSize;
+        const limit = wasPinching ? PINCH_OFF : PINCH_ON;
+        if (ratio < limit) pinching = true;
+      }
+
+      const now = performance.now();
+      if (pinching && !wasPinching && now - lastChange > PINCH_COOLDOWN) {
+        nextFilter();
+        lastChange = now;
+      }
+      wasPinching = pinching;
+    }
+
+    // pinky up = pinky tip (20) far from the wrist (0) compared to its middle joint (18),
+    // while the ring finger (tip 16, middle joint 14) stays curled
+    function isPinkyUp(hand) {
+      const pinkyOut = dist(hand[0], hand[20]) / dist(hand[0], hand[18]);
+      const ringOut = dist(hand[0], hand[16]) / dist(hand[0], hand[14]);
+      return pinkyOut > PINKY_UP_RATIO && ringOut < 1.1;
+    }
+
+    function checkPinky(result) {
+      const up = result.landmarks.some(isPinkyUp);
+      const now = performance.now();
+
+      if (!up) {
+        pinkyStart = 0;
+        pinkyUsed = false;      // pinky went down, so it can trigger again later
+        return;
+      }
+
+      if (pinkyStart === 0) pinkyStart = now;
+
+      // held long enough, and not already used for this raise
+      if (!pinkyUsed && now - pinkyStart > PINKY_HOLD_MS) {
+        pinkyUsed = true;
+        trigger();
+      }
+    }
+
+    // ---- loading the hand tracker and the camera ----
+    async function createLandmarker(vision, delegate) {
+      return HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath:
+            "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+          delegate: delegate
+        },
+        runningMode: "VIDEO",
+        numHands: NORMAL_HANDS
+      });
+    }
+
+    async function loadModel() {
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+      );
+      try {
+        handLandmarker = await createLandmarker(vision, DELEGATE);
+      } catch (err) {
+        // if one way fails on this device, try the other way
+        handLandmarker = await createLandmarker(vision, DELEGATE === "GPU" ? "CPU" : "GPU");
+      }
+      if (groupMode) {
+        handLandmarker.setOptions({ numHands: GROUP_HANDS });
+      }
+    }
+
+    function applyVideoSize() {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      setupEffects();
+      fitCanvas();
+      if (!drawing) {
+        drawing = true;
+        draw();
+      }
+    }
+
+    async function startCamera() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("insecure");
+      }
+
+      video.addEventListener("loadedmetadata", applyVideoSize, { once: true });
+      // when a phone is turned sideways, the video changes shape
+      video.addEventListener("resize", () => {
+        if (drawing && (video.videoWidth !== canvas.width || video.videoHeight !== canvas.height)) {
+          applyVideoSize();
+        }
+      });
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: "user",                 // front camera on phones
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { ideal: 30 }
+        }
+      });
+      video.srcObject = stream;
+      try {
+        await video.play();
+      } catch (e) {
+        // autoplay already handles it on most devices
+      }
+      return true;
+    }
+
+    function cameraErrorText(err) {
+      if (err && err.message === "insecure") {
+        return "The camera needs a secure page. Open this site with https.";
+      }
+      if (err && err.name === "NotAllowedError") {
+        return "Camera access was blocked. Allow the camera for this site, then refresh the page.";
+      }
+      if (err && err.name === "NotFoundError") {
+        return "No camera was found on this device.";
+      }
+      return "Could not start the camera. Close other apps that use it, then refresh the page.";
+    }
+
+    // ---- the frame shape ----
+    // put points in a circle order around their middle so the shape doesn't twist
+    function sortAroundCenter(points) {
+      const cx = points.reduce((sum, p) => sum + p.x, 0) / points.length;
+      const cy = points.reduce((sum, p) => sum + p.y, 0) / points.length;
+      return points.sort(
+        (a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx)
+      );
+    }
+
+    // do two line segments cross? if yes, return the crossing point
+    function intersect(p1, p2, p3, p4) {
+      const d = (p2.x - p1.x) * (p4.y - p3.y) - (p2.y - p1.y) * (p4.x - p3.x);
+      if (Math.abs(d) < 1e-6) return null;
+      const t = ((p3.x - p1.x) * (p4.y - p3.y) - (p3.y - p1.y) * (p4.x - p3.x)) / d;
+      const u = ((p3.x - p1.x) * (p2.y - p1.y) - (p3.y - p1.y) * (p2.x - p1.x)) / d;
+      if (t > 0 && t < 1 && u > 0 && u < 1) {
+        return { x: p1.x + t * (p2.x - p1.x), y: p1.y + t * (p2.y - p1.y) };
+      }
+      return null;
+    }
+
+    // normal frame = 1 shape. twisted into an X = 2 triangles.
+    function buildShapes(c) {
+      let X = intersect(c[0], c[1], c[2], c[3]);
+      if (X) return [[X, c[1], c[2]], [X, c[3], c[0]]];
+      X = intersect(c[1], c[2], c[3], c[0]);
+      if (X) return [[X, c[2], c[3]], [X, c[0], c[1]]];
+      return [c];
+    }
+
+    // find the 4 corners of the frame from the hands on screen
+    //  - 2 hands: the thumb and index fingertips of both hands
+    //  - 4 hands (Group mode, you + friends): each hand is one corner of a bigger square.
+    //    the corner of each hand's L (where thumb meets index) is used.
+    //  - 1 or 3 hands: no frame
+    function getFrameCorners() {
+      if (!lastResult) return null;
+      const hands = lastResult.landmarks;
+      const pt = (hand, i) => ({ x: hand[i].x * canvas.width, y: hand[i].y * canvas.height });
+
+      if (hands.length === 2) {
+        // left hand first, then right hand (by wrist position)
+        const sorted = hands.slice().sort((a, b) => a[0].x - b[0].x);
+        // corners in a fixed order: index, index, thumb, thumb
+        // normal L-shapes make a box. turn one hand and the lines cross into an X.
+        return [pt(sorted[0], 8), pt(sorted[1], 8), pt(sorted[1], 4), pt(sorted[0], 4)];
+      }
+
+      if (hands.length >= 4) {
+        const corners = hands.slice(0, 4).map((hand) => {
+          const a = pt(hand, 2);   // thumb base
+          const b = pt(hand, 5);   // index base
+          return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        });
+        return sortAroundCenter(corners);
+      }
+
+      return null;
+    }
+
+    function tracePath(points) {
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+      }
+      ctx.closePath();
+    }
+
+    // white outline around the filter area
+    function drawOutline(points) {
+      tracePath(points);
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = OUTLINE_COLOR;
+      ctx.lineWidth = 4;
+      if (OUTLINE_SHADOW) {
+        ctx.shadowColor = "rgba(0,0,0,0.55)";
+        ctx.shadowBlur = 6;
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.shadowColor = "transparent";
+    }
+
+    function draw() {
+      // nothing to do while the results screen is open (saves a lot of work)
+      if (resultsOpen) {
+        requestAnimationFrame(draw);
+        return;
+      }
+
+      // FPS counter (only counts when SHOW_FPS is true)
+      if (SHOW_FPS) {
+        frameCount++;
+        const now = performance.now();
+        if (now - fpsTime >= 1000) {
+          fpsLabel.textContent = "FPS: " + frameCount;
+          frameCount = 0;
+          fpsTime = now;
+        }
+      }
+
+      // 1. normal video everywhere
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // detect hands on a NEW camera frame, every Nth frame
+      frameNumber++;
+      const newFrame = video.currentTime !== lastVideoTime || video.currentTime === 0;
+      if (handLandmarker && video.readyState >= 2 && newFrame && frameNumber % DETECT_EVERY === 0) {
+        lastVideoTime = video.currentTime;
+        lastResult = handLandmarker.detectForVideo(video, performance.now());
+        checkPinch(lastResult);
+        checkPinky(lastResult);
+      }
+
+      const corners = getFrameCorners();
+
+      if (corners) {
+        const shapes = buildShapes(corners);
+
+        const nowTwisted = shapes.length === 2;
+        if (nowTwisted !== twisted) {
+          twisted = nowTwisted;
+          updateFilterLabel();
+        }
+
+        // 2. filtered video only inside each shape
+        // the filter picture is refreshed every FX_EVERY frames (on the frames where hands are not detected)
+        const refreshFx = (frameNumber % FX_EVERY) === (FX_EVERY - 1);
+        const t = performance.now();
+        shapes.forEach((shape, s) => {
+          const fx = effects[s];
+          const idx = (filterIndex + s) % filters.length;
+
+          if (refreshFx || fxKey[s] !== idx) {
+            fx.ctx.globalCompositeOperation = "source-over";
+            fx.ctx.globalAlpha = 1;
+            fx.ctx.imageSmoothingEnabled = true;
+            if (HAS_FILTER) fx.ctx.filter = "none";
+            filters[idx].apply(fx.ctx, t);
+            fxKey[s] = idx;
+          }
+
+          ctx.save();
+          tracePath(shape);
+          ctx.clip();
+          ctx.drawImage(fx.canvas, 0, 0, canvas.width, canvas.height);   // stretch to full size
+          ctx.restore();
+        });
+
+        // save the photo before the outline, unless the outline should be in the photo
+        if (captureRequested && !OUTLINE_IN_PHOTO) grabShot();
+
+        // 3. outline
+        drawOutline(corners);
+
+        if (captureRequested && OUTLINE_IN_PHOTO) grabShot();
+      } else {
+        if (twisted) {
+          twisted = false;
+          updateFilterLabel();
+        }
+        // no frame on screen, so just save the normal picture
+        if (captureRequested) grabShot();
+      }
+
+      requestAnimationFrame(draw);
+    }
+
+    async function start() {
+      setStatus("Loading... allow the camera when your browser asks.");
+
+      // start the camera and load the hand tracker at the same time
+      const cameraPromise = startCamera().catch((err) => {
+        setStatus(cameraErrorText(err));
+        return false;
+      });
+
+      try {
+        await loadModel();
+      } catch (err) {
+        setStatus("Could not load hand tracking. Check your internet and refresh the page.");
+        return;
+      }
+
+      const cameraOk = await cameraPromise;
+      if (cameraOk) setStatus("");
+    }
+
+    start();
+  </script>
+</body>
+</html>

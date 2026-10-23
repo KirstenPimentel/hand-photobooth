@@ -27,10 +27,8 @@
     }
     body {
       display: flex;
-      flex-direction: column;
       justify-content: center;
       align-items: center;
-      gap: 14px;
       font-family: sans-serif;
     }
     /* soft paper grain (static, so it does not slow the camera down) */
@@ -54,10 +52,26 @@
       pointer-events: none;
     }
 
+    /* ---- page layout: camera on the left, sticky note on the right ---- */
+    #layout {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: row;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 28px;
+    }
+    #main {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+
     /* ---- the camera panel: black with a white glowing rectangle ---- */
     #stage {
       position: relative;
-      z-index: 1;
       background: #050505;
       padding: 22px;   /* keep the same number as STAGE_PAD in the script */
       border-radius: 26px;
@@ -125,23 +139,58 @@
       text-shadow: 0 0 20px black;
       pointer-events: none;
     }
-    /* handwritten instructions on the lower part of the camera frame */
-    #howto {
-      position: absolute;
-      left: 22px;
-      right: 22px;
-      bottom: 22px;
-      padding: 30px 12px 10px;
-      text-align: center;
-      white-space: pre-line;
-      color: #fff;
+
+    /* ---- the sticky note with the instructions ---- */
+    #note {
+      position: relative;
+      width: 250px;
+      margin-top: 110px;
+      padding: 38px 22px 24px;
+      box-sizing: border-box;
+      background: #f3e48a;
+      background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0) 45%);
+      color: #2a2618;
       font-family: "Caveat", "Segoe Print", "Bradley Hand", "Chalkboard SE", "Comic Sans MS", cursive;
-      font-weight: 700;
-      font-size: clamp(16px, 3.8vw, 26px);
+      font-size: 23px;
       line-height: 1.15;
-      text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
-      background: linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.55));
-      pointer-events: none;
+      transform: rotate(2.5deg);
+      box-shadow: 0 12px 20px rgba(0, 0, 0, 0.25), 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+    /* a piece of tape on top */
+    #note::before {
+      content: "";
+      position: absolute;
+      top: -14px;
+      left: 50%;
+      width: 96px;
+      height: 28px;
+      transform: translateX(-50%) rotate(-3deg);
+      background: rgba(255, 255, 255, 0.55);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+    #note h3 {
+      margin: 0 0 10px;
+      font-size: 30px;
+      font-weight: 700;
+      text-decoration: underline;
+      text-decoration-thickness: 2px;
+    }
+    #note ol {
+      margin: 0;
+      padding-left: 26px;
+    }
+    #note li {
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+    #noteStatus {
+      margin: 12px 0 0;
+      font-weight: 700;
+      font-size: 25px;
+      color: #b3261e;   /* red ink */
+    }
+    #noteStatus:empty {
+      display: none;
     }
 
     #status {
@@ -164,8 +213,6 @@
 
     /* ---- buttons under the camera ---- */
     #controls {
-      position: relative;
-      z-index: 1;
       display: flex;
       gap: 10px;
       align-items: center;
@@ -186,7 +233,7 @@
     #photoBtn:hover {
       background: #333;
     }
-    #groupBtn {
+    #groupBtn, #howtoBtn {
       padding: 10px 16px;
       font-size: 14px;
       border: 1.5px solid var(--ink);
@@ -200,6 +247,9 @@
       background: var(--ink);
       color: #f3eee0;
     }
+    #howtoBtn {
+      display: none;   /* only shown on small screens */
+    }
 
     #flash {
       position: fixed;
@@ -211,9 +261,8 @@
       z-index: 20;
     }
 
-    /* when the results screen is open, the camera is hidden */
-    body.results-open #stage,
-    body.results-open #controls {
+    /* when the results screen is open, the camera and the note are hidden */
+    body.results-open #layout {
       display: none;
     }
 
@@ -319,7 +368,30 @@
       color: #f3eee0;
     }
 
-    /* small screens (phones) */
+    /* small screens (phones, iPad standing up): the sticky note becomes a pop-up.
+       tap "How to play" to see it, tap the note to close it */
+    @media (max-width: 900px) {
+      #layout {
+        flex-direction: column;
+        align-items: center;
+      }
+      #howtoBtn {
+        display: inline-block;
+      }
+      #note {
+        display: none;
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        margin: 0;
+        width: min(300px, 82vw);
+        transform: translate(-50%, -50%) rotate(-2deg);
+        z-index: 8;
+      }
+      #note.open {
+        display: block;
+      }
+    }
     @media (max-width: 600px) {
       .layoutBtn {
         padding: 8px 10px;
@@ -363,19 +435,36 @@
 <body>
   <video id="video" autoplay muted playsinline></video>
 
-  <div id="stage">
-    <canvas id="canvas"></canvas>
-    <div id="filterName"></div>
-    <div id="fps">FPS: --</div>
-    <div id="shotLabel"></div>
-    <div id="toast"></div>
-    <div id="countdown"></div>
-    <div id="howto"></div>
-  </div>
+  <div id="layout">
+    <div id="main">
+      <div id="stage">
+        <canvas id="canvas"></canvas>
+        <div id="filterName"></div>
+        <div id="fps">FPS: --</div>
+        <div id="shotLabel"></div>
+        <div id="toast"></div>
+        <div id="countdown"></div>
+      </div>
 
-  <div id="controls">
-    <button id="groupBtn">Group mode: off</button>
-    <button id="photoBtn">Start Photobooth</button>
+      <div id="controls">
+        <button id="howtoBtn">How to play</button>
+        <button id="groupBtn">Group mode: off</button>
+        <button id="photoBtn">Start Photobooth</button>
+      </div>
+    </div>
+
+    <!-- the sticky note -->
+    <aside id="note">
+      <h3>how to take your photos</h3>
+      <ol>
+        <li>make an L with both hands to frame your shot</li>
+        <li>pinch to change the filter</li>
+        <li>twist one hand to use two filters</li>
+        <li id="noteTake">raise your pinky to take each photo (4 in all)</li>
+        <li>with friends? turn on group mode and use 4 hands</li>
+      </ol>
+      <p id="noteStatus"></p>
+    </aside>
   </div>
 
   <div id="status"></div>
@@ -436,6 +525,7 @@
 
     const MAX_DISPLAY_WIDTH = 960;    // biggest the camera picture gets on big screens
     const STAGE_PAD = 22;             // must match the padding of #stage in the CSS
+    const NOTE_ROOM = 280;            // space kept for the sticky note on wide screens (note width + gap)
     const FX_SIZE = 320;              // filters are drawn at this size (longest side), then stretched. 240 = faster
     const CARTOON_EDGE = 140;         // smaller = more black outlines in Cartoon
     const NEON_EDGE = 60;             // smaller = more glowing lines in Neon Glow
@@ -459,7 +549,10 @@
     const toast = document.getElementById("toast");
     const statusLabel = document.getElementById("status");
     const shotLabel = document.getElementById("shotLabel");
-    const howto = document.getElementById("howto");
+    const note = document.getElementById("note");
+    const noteStatus = document.getElementById("noteStatus");
+    const noteTake = document.getElementById("noteTake");
+    const howtoBtn = document.getElementById("howtoBtn");
     const photoBtn = document.getElementById("photoBtn");
     const groupBtn = document.getElementById("groupBtn");
     const countdownLabel = document.getElementById("countdown");
@@ -471,12 +564,23 @@
     const printImg = document.getElementById("printImg");
 
     const isTouch = window.matchMedia("(pointer: coarse)").matches;
+    const wideScreen = window.matchMedia("(min-width: 901px)");   // wide = the note sits beside the camera
 
-    // the handwritten instructions on the camera frame
-    const idleHint = isTouch
-      ? "1. make an L with both hands to frame your shot\n2. pinch to change the filter, twist a hand for two\n3. tap start or raise your pinky for each photo"
-      : "1. make an L with both hands to frame your shot\n2. pinch to change the filter, twist a hand for two\n3. raise your pinky to take each photo";
-    howto.textContent = idleHint;
+    // phones and tablets tap the button, laptops raise the pinky (or both)
+    noteTake.textContent = isTouch
+      ? "tap start or raise your pinky to take each photo (4 in all)"
+      : "raise your pinky to take each photo (4 in all)";
+
+    // small screens: "How to play" opens the sticky note, tapping the note closes it
+    howtoBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      note.classList.toggle("open");
+    });
+    // clicks on the note should not change the filter
+    note.addEventListener("click", (e) => {
+      e.stopPropagation();
+      note.classList.remove("open");
+    });
 
     fpsLabel.style.display = SHOW_FPS ? "block" : "none";
     let frameCount = 0;
@@ -490,7 +594,8 @@
     function fitCanvas() {
       if (!canvas.width) return;
       const gap = 14;
-      const roomW = window.innerWidth - 2 * (STAGE_PAD + gap);
+      const noteRoom = wideScreen.matches ? NOTE_ROOM : 0;
+      const roomW = window.innerWidth - 2 * (STAGE_PAD + gap) - noteRoom;
       const roomH = window.innerHeight - 2 * (STAGE_PAD + gap) - 80;   // 80 = space for the buttons
       const scale = Math.max(
         0.1,
@@ -1076,7 +1181,6 @@
     let pinkyUsed = false;     // true after it triggered, until the pinky goes down
 
     let busy = false;              // true while the 4-photo session is running
-    let waiting = false;           // true while waiting for you to raise your pinky for the next photo
     let triggerResolve = null;     // lets the pinky / button / C key continue the session
     let resultsOpen = false;       // true while the results screen is showing
     let captureRequested = false;
@@ -1119,13 +1223,6 @@
       updateFilterLabel();
       showToast(filterText());
     }
-
-    // the handwritten text is shown when waiting for you, and hidden during a countdown or on the results screen
-    function updateHint() {
-      const hide = resultsOpen || (busy && !waiting);
-      howto.style.visibility = hide ? "hidden" : "visible";
-    }
-    updateHint();
 
     // Group mode: track 4 hands so you and friends can make a bigger square.
     // it is off by default because tracking 4 hands is heavier.
@@ -1192,30 +1289,27 @@
       if (busy || resultsOpen || !drawing) return;
       busy = true;
       shots = [];
-      updateHint();
 
       for (let i = 0; i < TOTAL_SHOTS; i++) {
         shotLabel.textContent = "Photo " + (i + 1) + " of " + TOTAL_SHOTS;
 
         // photos 2, 3 and 4 wait for you to raise your pinky again
+        // (the message shows on the sticky note, and the button changes its text)
         if (i > 0) {
-          waiting = true;
-          howto.textContent = isTouch
-            ? "raise your pinky or tap the button for photo " + (i + 1)
-            : "raise your pinky for photo " + (i + 1);
+          noteStatus.textContent = isTouch
+            ? "now: raise your pinky or tap the button for photo " + (i + 1)
+            : "now: raise your pinky for photo " + (i + 1);
           photoBtn.textContent = "Take Photo " + (i + 1) + " of " + TOTAL_SHOTS;
-          updateHint();
           await waitForTrigger();
-          waiting = false;
-          updateHint();
         }
 
+        noteStatus.textContent = "get ready for photo " + (i + 1) + "!";
         await countdown(COUNTDOWN_SECONDS);
         await captureFrame();
       }
 
       shotLabel.textContent = "";
-      howto.textContent = idleHint;
+      noteStatus.textContent = "";
       photoBtn.textContent = "Start Photobooth";
       sessionDate = new Date().toLocaleDateString(undefined, {
         year: "numeric", month: "short", day: "numeric"
@@ -1255,9 +1349,9 @@
     // ---- results screen ----
     function openResults() {
       resultsOpen = true;
+      note.classList.remove("open");
       document.body.classList.add("results-open");
       results.classList.add("show");
-      updateHint();
       drawSheet();
     }
 
@@ -1266,7 +1360,6 @@
       document.body.classList.remove("results-open");
       results.classList.remove("show");
       lastResult = null;
-      updateHint();
       fitCanvas();
     }
 

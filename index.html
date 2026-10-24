@@ -512,9 +512,14 @@
     const GROUP_HANDS = 4;            // hands tracked when Group mode is on (you + friends)
     const SHOW_FPS = false;           // true = show the FPS counter
     const SHOW_FILTER_NAME = true;    // set to false to hide the filter name
-    const PINCH_ON = 0.3;             // smaller = you must pinch tighter
-    const PINCH_OFF = 0.6;            // how far you must open to pinch again
-    const PINCH_COOLDOWN = 600;       // milliseconds before it can change again
+
+    // pinch (changes the filter)
+    const PINCH_ON = 0.4;             // how close your thumb and finger must get. bigger = easier, smaller = stricter
+    const PINCH_OFF = 0.7;            // how far you must open your fingers before the next pinch can count
+    const PINCH_WINDOW = 3;           // looks at your last 3 hand checks...
+    const PINCH_VOTES = 2;            // ...and needs 2 of them to be a pinch (1 = most sensitive, 3 = strictest)
+    const PINCH_COOLDOWN = 500;       // milliseconds before the filter can change again
+
     const TOTAL_SHOTS = 4;            // how many photos per session
     const COUNTDOWN_SECONDS = 3;      // countdown before EACH photo
     const OUTLINE_IN_PHOTO = true;    // true = the outline is saved in the photo, so you can see the filter area
@@ -1174,7 +1179,9 @@
     let frameNumber = 0;
     let drawing = false;
 
-    let wasPinching = false;
+    let wasPinching = false;       // were the fingers pinched at the last check?
+    let pinchLatched = false;      // true after a pinch changed the filter, until you open your fingers
+    const pinchHistory = [];       // the last few checks (true = pinching)
     let lastChange = 0;
 
     let pinkyStart = 0;        // when the pinky first went up (0 = not up)
@@ -1360,6 +1367,10 @@
       document.body.classList.remove("results-open");
       results.classList.remove("show");
       lastResult = null;
+      // forget old pinch checks so nothing changes by accident when the camera comes back
+      pinchHistory.length = 0;
+      pinchLatched = false;
+      wasPinching = false;
       fitCanvas();
     }
 
@@ -1578,6 +1589,11 @@
     //  - only 1 hand in view: thumb tip (4) + index fingertip (8)
     //  - 2 or more hands in view: thumb tip (4) + middle fingertip (12), because the thumb
     //    and index fingertips are the corners of your frame
+    //
+    // to be sensitive but not jumpy:
+    //  - the fingers only need to get CLOSE (PINCH_ON), and must open wide (PINCH_OFF) to count again
+    //  - 2 of the last 3 checks must be a pinch, so one camera flicker does nothing
+    //  - one pinch = one change, then it waits for you to open your fingers
     function checkPinch(result) {
       if (resultsOpen) return;
       const oneHand = result.landmarks.length === 1;
@@ -1585,18 +1601,29 @@
       let pinching = false;
 
       for (const hand of result.landmarks) {
-        const palmSize = dist(hand[0], hand[9]);
+        // hand size: the longer of palm length and palm width (steadier when the hand tilts)
+        const palmSize = Math.max(dist(hand[0], hand[9]), dist(hand[5], hand[17]));
+        if (palmSize < 1) continue;
         const ratio = dist(hand[4], hand[otherTip]) / palmSize;
         const limit = wasPinching ? PINCH_OFF : PINCH_ON;
         if (ratio < limit) pinching = true;
       }
+      wasPinching = pinching;
+
+      pinchHistory.push(pinching);
+      if (pinchHistory.length > PINCH_WINDOW) pinchHistory.shift();
+      const votes = pinchHistory.filter(Boolean).length;
 
       const now = performance.now();
-      if (pinching && !wasPinching && now - lastChange > PINCH_COOLDOWN) {
-        nextFilter();
-        lastChange = now;
+      if (!pinchLatched) {
+        if (votes >= PINCH_VOTES && now - lastChange > PINCH_COOLDOWN) {
+          nextFilter();
+          lastChange = now;
+          pinchLatched = true;
+        }
+      } else if (votes === 0) {
+        pinchLatched = false;   // fingers are open again, ready for the next pinch
       }
-      wasPinching = pinching;
     }
 
     // pinky up = pinky tip (20) far from the wrist (0) compared to its middle joint (18),
